@@ -1,0 +1,142 @@
+local INVALID_EVENTS = {
+    SPELL_DISPEL            = true,
+    SPELL_DISPEL_FAILED     = true,
+    SPELL_STOLEN            = true,
+    SPELL_AURA_REMOVED_DOSE = true,
+    SPELL_AURA_BROKEN       = true,
+    SPELL_AURA_BROKEN_SPELL = true,
+    SPELL_CAST_FAILED       = true,
+    SPELL_PERIODIC_HEAL     = true,
+    SPELL_CAST_SUCCESS      = true,
+}
+
+local validSpellId = {
+	[50842] = true,
+}
+
+aura_env.nameplates = {}
+local nameplates = aura_env.nameplates
+
+local hexNoGUID = "0x0000000000000000"
+local myGUID = UnitGUID("player")
+local substr = string.sub
+local stformat = string.format
+
+local checkEpidemicRank = function()
+	local name, iconPath, tier, column, currentRank, maxRank, isExceptional, meetsPrereq = GetTalentInfo(3, 5);
+	return 15 + 3 * currentRank
+end
+
+local checkDisease = function()
+	for j=1, 40 do
+		local debuffName, _ = UnitDebuff("target", j)
+		if debuffName == "Frost Fever" or debuffName == "Blood Plague" then
+			return true;
+		end
+	end
+
+	return false;
+end
+
+local diseaseCount = function()
+	local count = 0;
+	
+	for i, unit in pairs(nameplates) do
+		for j = 1, 40 do
+			local debuffName, _ = UnitAura(i, j, "PLAYER|HARMFUL");
+			if debuffName == "Frost Fever" or debuffName == "Blood Plague" then
+				count = count + 1;
+				--print(stformat("%s is affected by diseases", i));
+				break;
+			end
+		end
+	end
+	
+	return count;
+end
+
+local InitAura = function(allstates)
+	
+	print("init aura")
+	if not checkDisease() then return; end
+	local diseaseDuration = checkEpidemicRank();
+	local expiration = GetTime() + diseaseDuration; 
+	--local stateName = "Pest_Timer";
+	--allstates[stateName] = allstates[stateName] or {
+	--	progressType = "timed",
+	--	changed = true,
+	--	autoHide = true,
+	--	index = 0,
+	--	icon = 136182,
+	--}
+	--allstates[stateName].duration = diseaseDuration;
+	--allstates[stateName].expirationTime = expiration;
+	--allstates[stateName].show = true;
+	--allstates[stateName].changed = true;
+
+	local diseaseCount = diseaseCount();
+	
+	--print(stformat("Num of targets affected by diseases: %s", diseaseCount));
+
+	allstates["pestcount"] = allstates["pestcount"] or {
+		progressType = "timed", 
+		index = 1,
+		autoHide = true,
+		index = 0,
+		icon = 136182,
+	}
+	--allstates["pestcount"].duration = diseaseDuration;
+	--allstates["pestcount"].expirationTime = expiration;
+	allstates["pestcount"].stacks = diseaseCount;
+	allstates["pestcount"].show = true;
+	allstates["pestcount"].changed = true;
+
+end
+
+local OnCLEU = function(allstates, ...)
+	local _, subEvent, _, sourceGUID, _,_, _, destGUID, _,_,_, spellId, spellName = ...
+	if not subEvent then return end
+	
+	if INVALID_EVENTS[subEvent] then return end
+	
+	if substr(subEvent, 0, 6) ~= "SPELL_" then return end
+	if ((destGUID == myGUID and ((not sourceGUID or sourceGUID == hexNoGUID) or sourceGUID == destGUID)) or sourceGUID == myGUID) then
+		if subEvent == "SPELL_ENERGIZE" and validSpellId[spellId] then 
+			InitAura(allstates)
+		end
+
+		return true
+	end
+
+end
+
+
+
+aura_env.OnTrigger = function(allstates, event, ...)
+	if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+		OnCLEU(allstates, ...)
+	elseif event == "NAME_PLATE_UNIT_REMOVED" then
+		local unitId = select(1, ...)
+		nameplates[unitId] = nil;
+	elseif event == "NAME_PLATE_UNIT_ADDED" then
+		local unitId = select(1, ...)
+		nameplates[unitId] = unitId;
+	end
+	
+	local diseaseCount = diseaseCount();
+	
+	--print(stformat("Num of targets affected by diseases: %s", diseaseCount));
+
+	allstates["pestcount"] = allstates["pestcount"] or {
+		show = true,
+		changed = true,
+		progressType = "timed", 
+		expirationTime = 21,
+		index = 1,
+		icon = 136182,
+		autoHide = true,
+		stacks = diseaseCount,
+	}
+
+	return true
+end
