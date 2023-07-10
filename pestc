@@ -14,31 +14,93 @@ local validSpellId = {
     [50842] = true,
 }
 
+aura_env.nameplates = {}
+local nameplates = aura_env.nameplates
+
 local hexNoGUID = "0x0000000000000000"
 local myGUID = UnitGUID("player")
 local substr = string.sub
 local stformat = string.format
+
+local CLEU = "COMBAT_LOG_EVENT_UNFILTERED";
+local NAME_PLATE_UNIT_REMOVED = "NAME_PLATE_UNIT_REMOVED";
+local NAME_PLATE_UNIT_ADDED = "NAME_PLATE_UNIT_ADDED";
+local SPELL_ENERGIZE = "SPELL_ENERGIZE";
+local TIMED = "timed";
+local PLAYER = "player";
+
+local pestIconId = 136182;
+local stateName = "pestcount";
 
 local checkEpidemicRank = function()
     local name, iconPath, tier, column, currentRank, maxRank, isExceptional, meetsPrereq = GetTalentInfo(3, 5);
     return 15 + 3 * currentRank
 end
 
-local InitAura = function(allstates)
+local checkDisease = function()
+    for j=1, 40 do
+        local debuffName, _ = UnitDebuff("target", j)
+        if debuffName == "Frost Fever" or debuffName == "Blood Plague" then
+            return true;
+        end
+    end
     
+    return false;
+end
+
+local diseaseCount = function()
+    local count = 0;
+    
+    for i, unit in pairs(nameplates) do
+        for j = 1, 40 do
+            local debuffName, _ = UnitAura(i, j, "PLAYER|HARMFUL");
+			if debuffName == nil then
+				break;
+            elseif debuffName == "Frost Fever" or debuffName == "Blood Plague" then
+                count = count + 1;
+                break;
+            end
+        end
+    end
+    
+    return count;
+end
+
+
+local InitDiseaseTimer = function(allstates, stateName)
     if not checkDisease() then return; end
-    local stateName = "Pest_Timer";
+    local diseaseDuration = checkEpidemicRank();
+    local expiration = GetTime() + diseaseDuration; 
+    
     allstates[stateName] = allstates[stateName] or {
-        progressType = "timed",
-        changed = true,
+        progressType = TIMED, 
+        index = 1,
         autoHide = true,
         index = 0,
-        icon = 136182,
+        icon = pestIconId,
     }
-    allstates[stateName].duration = checkEpidemicRank();
-    allstates[stateName].expirationTime = GetTime() + checkEpidemicRank();
+    allstates[stateName].duration = diseaseDuration;
+    allstates[stateName].expirationTime = expiration;
     allstates[stateName].show = true;
     allstates[stateName].changed = true;
+    
+    return true;
+end
+
+local InitDiseaseStacks = function(allstates, stateName)
+    if not checkDisease() then return; end
+    local diseaseCount = diseaseCount();
+    
+    allstates[stateName].stacks = diseaseCount;
+    allstates[stateName].show = true;
+    allstates[stateName].changed = true;
+end
+
+local InitAura = function(allstates)
+    
+    InitDiseaseTimer(allstates, stateName);
+    C_Timer.After(0.5, function() InitDiseaseStacks(allstates, stateName) end)
+    
 end
 
 
@@ -50,7 +112,7 @@ local OnCLEU = function(allstates, ...)
     
     if substr(subEvent, 0, 6) ~= "SPELL_" then return end
     if ((destGUID == myGUID and ((not sourceGUID or sourceGUID == hexNoGUID) or sourceGUID == destGUID)) or sourceGUID == myGUID) then
-        if subEvent == "SPELL_ENERGIZE" and validSpellId[spellId] then 
+        if subEvent == SPELL_ENERGIZE and validSpellId[spellId] then 
             InitAura(allstates)
         end
         
@@ -59,9 +121,40 @@ local OnCLEU = function(allstates, ...)
     
 end
 
+local addNameplate = function(...) 
+
+	local unitId = select(1, ...);
+
+	if unitId ~= nil then
+		nameplates[unitId] = unitId;
+	end
+
+end
+
+local removeNameplate = function(...)
+	
+	local unitId = select(1, ...);
+	
+	if unitId ~= nil then
+		nameplates[unitId] = nil;	
+	end
+
+end
+
 aura_env.OnTrigger = function(allstates, event, ...)
-    if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+
+	if not UnitAffectingCombat(PLAYER) then
+		if allstates[stateName] ~= nil then
+			allstates[stateName].show = false;
+		end
+	end
+
+    if event == CLEU then
         OnCLEU(allstates, ...)
+    elseif event == NAME_PLATE_UNIT_REMOVED then
+		removeNameplate(...)
+    elseif event == NAME_PLATE_UNIT_ADDED then
+		addNameplate(...);
     end
 
     return true
